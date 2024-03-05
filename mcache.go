@@ -1,16 +1,25 @@
 package mcache
 
-import "sync"
+import (
+	"bytes"
+	"sync"
+)
 
 const maxSize = 46
 
-var caches [maxSize]sync.Pool
+var (
+	caches       [maxSize]sync.Pool
+	bufferCaches [maxSize]sync.Pool
+)
 
 func init() {
 	for i := 0; i < maxSize; i++ {
 		size := 1 << i
 		caches[i].New = func() any {
 			return make([]byte, 0, size)
+		}
+		bufferCaches[i].New = func() any {
+			return bytes.NewBuffer(make([]byte, 0, size))
 		}
 	}
 }
@@ -29,6 +38,18 @@ func Malloc(size int, capacity ...int) []byte {
 	return buf
 }
 
+func MallocBuffer(size int, capacity ...int) *bytes.Buffer {
+	if len(capacity) > 1 {
+		panic("too many arguments to Malloc")
+	}
+	var c = size
+	if len(capacity) > 0 && capacity[0] > size {
+		c = capacity[0]
+	}
+	var buf = bufferCaches[calcIndex(c)].Get().(*bytes.Buffer)
+	return buf
+}
+
 // Free 回收[]byte
 func Free(buf []byte) {
 	size := cap(buf)
@@ -40,6 +61,17 @@ func Free(buf []byte) {
 	buf = buf[:0]
 	//回收
 	caches[bitsLen(size)-1].Put(buf)
+}
+
+func FreeBuffer(buf *bytes.Buffer) {
+	size := buf.Cap()
+	//大小不是2的幂, 不回收
+	if !isPowerOfTwo(size) {
+		return
+	}
+	buf.Reset()
+	//回收
+	bufferCaches[bitsLen(size)-1].Put(buf)
 }
 
 // 根据size计算出合适大小的[]byte
